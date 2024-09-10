@@ -1,0 +1,15 @@
+torch
+torchvision
+opencv-python
+open3d
+numpy
+tqdm
+clip
+
+# for dataset organization, it is recommended to use a separate python environment to create openad data
+# waymo-open-dataset-tf-2-3-0==1.2
+# av2==0.2.1
+# nuscenes-devkit==1.1.11
+# tensorflow==2.13
+# numpy==1.22
+# numba==0.58
