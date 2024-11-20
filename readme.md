@@ -14,12 +14,12 @@ We welcome your feedback and suggestions for using this benchmark.
 <img src="https://github.com/VDIGPKU/OpenAD/blob/main/assets/properties.png" width="1000"/>
 
 OpenAD is the first open-world 3D object detection benchmark for autonomous driving. 
-We selected 2,000 scenes from 5 public datasets and annotated 6,597 3D corner cases for each scene. 
+We selected 2,000 scenes from 5 public datasets and annotated 6,597 3D corner cases for these scenes. 
 You can use this toolkit to organize data, load data, and evaluate your model with a few simple commands.
 
 ## Data Preparation
 
-It is recommended to create a new Python virtual environment to prepare the complete openad data.
+Creating a new Python virtual environment is recommended to prepare the complete OpenAD data.
 
 1. Due to the use of terms of each dataset, 
 we cannot provide downloads of the full data. 
@@ -45,7 +45,7 @@ pip install -r requirements_create.txt
 python setup.py install
 ```
 
-4. Create the complete openad data
+4. Create the complete OpenAD data
 
 ```bash
 python -c "
@@ -80,7 +80,7 @@ python setup.py install
 
 ### Loading Data
 
-You can directly use the already defined torch.dataset subclass to load the data.
+You can directly use the already-defined torch.dataset subclass to load the data.
 
 An example is shown below, 
 where the model to be tested is trained only on the nuScenes training set,
@@ -102,10 +102,15 @@ dd = OpenAD(
 )
 
 print(dd[1970].keys())
+print(len(dd[1970]['sweeps']))
+print(dd[1970]['sweeps'][0].keys())
 ```
 ```
-dict_keys(['width', 'height', 'rowMajor', 'camera_internal', 'camera_external', 'dataset', 'timestamp_ms', 
-'sensors_path', 'lidar_past2now', 'image', 'image_path', 'points', 'sweeps', 'lidar2cam'])
+dict_keys(['width', 'height', 'rowMajor', 'camera_internal', 'camera_external',
+'dataset', 'timestamp_ms', 'sensors_path', 'lidar_past2now', 'image',
+'image_path', 'points', 'sweeps', 'lidar2cam'])
+4
+dict_keys(['image', 'image_path', 'points', 'lidar_past2now'])
 ```
 
 ### Evaluation
@@ -236,16 +241,13 @@ your_prediction:
 
 ## Licenses
 
-Unless specifically labeled otherwise, these code and OpenAD dataset files are provided to You 
+Unless specifically labeled otherwise, this toolkit code and OpenAD dataset files are provided to You 
 under the terms of the Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International Public License 
 (“[CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode)”), 
 with the additional terms included herein.
 When You download or use the Datasets from the Website or elsewhere, 
 you are agreeing to comply with the terms of CC BY-NC-SA 4.0, 
 and also agreeing to the Dataset Terms. 
-Where these Dataset Terms conflict with the terms of CC BY-NC-SA 4.0, 
-these Dataset Terms shall prevail. 
-We reiterate once again that this dataset is used only for non-commercial purposes such as academic research, 
+This toolkit code and OpenAD dataset files are used only for non-commercial purposes such as academic research, 
 teaching, or scientific publications. 
-We prohibit you from using the dataset or any derivative works for commercial purposes, 
-such as selling data or using it for commercial gain.
+For business cooperation, please contact wyt@pku.edu.cn.
