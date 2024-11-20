@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 VERSION = '0.0.1'
 DESCRIPTION = 'OpenAD Benchmark'
-LONG_DESCRIPTION = 'OpenAD: An Open-World Autonomous Driving Scenes Benchmark for 3D Object Detection'
+LONG_DESCRIPTION = 'OpenAD: Open-World Autonomous Driving Scenes Benchmark for 3D Object Detection'
 
 
 def parse_requirements(fname='requirements.txt', with_version=True):

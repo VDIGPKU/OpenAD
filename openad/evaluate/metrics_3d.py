@@ -7,9 +7,11 @@ import numpy as np
 import clip
 import torch
 from tqdm import tqdm
+from multiprocessing import Pool
+import math
 
 
-def get_3d_summary(groundtruth_bbs, detected_bbs):
+def get_3d_summary(groundtruth_bbs, detected_bbs, sub_list):
     """Calculate the AP and AR for OpenAD,
         AP @ dist={0.5m, 1m, 2m, 4m} x Clip=0.5:0.9:0.2 for maxinum 500 pred per data
         AR @ dist={0.5m, 1m, 2m, 4m} x Clip=0.5:0.9:0.2 for maxinum 100 pred per data
@@ -20,7 +22,7 @@ def get_3d_summary(groundtruth_bbs, detected_bbs):
                 A list representing the ground-truth bounding boxes.
                 (list)[
                     N_images * (list)[
-                        N_bboxes * (list)[ (float)h, w, l, x, y, z, theta, (str)c ]
+                        N_bboxes * (list)[ (float)h, w, l, x, y, z, theta, seen, (str)c ]
                     ]
                 ]
             detected_bbs : list
@@ -38,66 +40,76 @@ def get_3d_summary(groundtruth_bbs, detected_bbs):
 
     assert len(groundtruth_bbs) == len(detected_bbs)
     for i in range(len(detected_bbs)):
-        if len(detected_bbs[i]) > 500:
-            detected_bbs[i] = detected_bbs[i][:500]
-            print(f'Number of predicted objects exceeds 500, only the first 500 will be calculated. (data index {i})')
+        if len(detected_bbs[i]) > 300:
+            detected_bbs[i] = detected_bbs[i][:300]
+            print(f'Number of predicted objects exceeds 300, only the first 300 will be calculated. (data index {i})')
 
     # separate bbs per image X class
-    _bbs = _group_detections(detected_bbs, groundtruth_bbs)
+    _bbs, sim_mat = _group_detections(detected_bbs, groundtruth_bbs)
 
     # pairwise ious
     clip_thresholds = [0.5, 0.7, 0.9]
 
+    print("Calculating Distance/ATE/ASE...")
+    args_list = []
+    for k, v in _bbs.items():
+        args_list.append((v["dt"], v["gt"], sim_mat))
+    with Pool() as pool:
+        iou_results = list(tqdm(pool.imap(_compute_ious, args_list), total=len(args_list)))
     _ious = {
-        ci: {k: _compute_ious(**v, clip_thr=ci) for k, v in _bbs.items()}
-        for ci in clip_thresholds
+        k: v for k, v in zip(_bbs.keys(), iou_results)
     }
 
-    def _evaluate(iou_threshold, clip_threshold, max_dets, area_range):
-        # accumulate evaluations on a per-class basis
-        _evals = defaultdict(lambda: {"matched": [], "NP": [], "ATE": [], "ASE": []})
+    print("Matching and Calculating AP/AR...")
+    def _evaluate(iou_threshold, clip_threshold, max_dets):
+        # accumulate evaluations
+        if clip_threshold == 0.5:
+            clip_idx = 0
+        elif clip_threshold == 0.7:
+            clip_idx = 1
+        else:
+            clip_idx = 2
+
+        res = {"AP": 0, "total positives": 0, "ATE": 0, "ASE": 0, "subTP": [0, 0, 0, 0], "aps_cnt": 0, "TP": 0}
         for img_id, class_id in _bbs:
             ev = _evaluate_image(
                 _bbs[img_id, class_id]["dt"],
                 _bbs[img_id, class_id]["gt"],
-                _ious[clip_threshold][img_id, class_id],
+                _ious[img_id, class_id][clip_idx],
                 iou_threshold,
                 max_dets,
-                area_range,
             )
-            acc = _evals[class_id]
-            acc["matched"].append(ev["matched"])
-            # print(acc["matched"])
-            acc["NP"].append(ev["NP"])
+            ev["matched"] = np.array(ev["matched"]).astype(bool)
+            evap = _compute_ap_recall(ev["matched"], ev["NP"])
+            ev["AP"] = evap["AP"]
+            ev["TP"] = evap["TP"]
+
+            # print(img_id, ev["NP"], ev["TP"], ev["subTP"])
+
+            for subi in range(4):
+                res["subTP"][subi] += ev["subTP"][subi]
+            if ev["TP"] is not None:
+                res["TP"] += ev["TP"]
+                res["AP"] += ev["AP"]
+                res["total positives"] += ev["NP"]
+                res["aps_cnt"] += 1
             if ev["ATE"] is not None:
-                acc["ATE"].append(ev["ATE"])
-                acc["ASE"].append(ev["ASE"])
+                res["ATE"] += ev["ATE"] * ev["TP"]
+                res["ASE"] += ev["ASE"] * ev["TP"]
 
-        # now reduce accumulations
-        for class_id in _evals:
-            acc = _evals[class_id]
-            acc["matched"] = np.concatenate(acc["matched"]).astype(bool)
-            acc["NP"] = np.sum(acc["NP"])
-
-        res = []
-        # run ap calculation per-class
-        for class_id in _evals:
-            ev = _evals[class_id]
-            res.append({
-                "class": class_id,
-                "ATE": np.mean(ev["ATE"]) if len(ev["ATE"]) > 0 else None,
-                "ASE": np.mean(ev["ASE"]) if len(ev["ASE"]) > 0 else None,
-                **_compute_ap_recall(ev["matched"], ev["NP"]),
-            })
-        return res
+        res["AP"] = res["AP"] / res["aps_cnt"]
+        res["ATE"] = res["ATE"] / res["TP"]
+        res["ASE"] = res["ASE"] / res["TP"]
+        return [res]
 
     iou_thresholds = [1 / (1 + 0.5), 1 / (1 + 1.0), 1 / (1 + 2.0), 1 / (1 + 4.0)]
 
     # compute simple AP with all thresholds, using up to 100 dets, and all areas
     full = {
-        i * 100 + ci: _evaluate(iou_threshold=i, clip_threshold=ci, max_dets=500, area_range=(0, np.inf))
+        i * 100 + ci: _evaluate(iou_threshold=i, clip_threshold=ci, max_dets=300)
         for i in iou_thresholds for ci in clip_thresholds
     }
+
     print('AP Summary', end='')
     for i in iou_thresholds:
         print(f'\tD@{(1/i)-1:.1f}m', end='')
@@ -109,11 +121,6 @@ def get_3d_summary(groundtruth_bbs, detected_bbs):
             print(f'\t{ap:.4f}', end='')
         print('\n', end='')
 
-    max_det100 = {
-        i * 100 + ci: _evaluate(iou_threshold=i, clip_threshold=ci, max_dets=100, area_range=(0, np.inf))
-        for i in iou_thresholds for ci in clip_thresholds
-    }
-
     print('AR Summary', end='')
     for i in iou_thresholds:
         print(f'\tD@{(1/i)-1:.1f}m', end='')
@@ -122,28 +129,46 @@ def get_3d_summary(groundtruth_bbs, detected_bbs):
         print(f'sem@{ci:.2f}', end='')
         for i in iou_thresholds:
             ar = np.mean([
-                x['TP'] / x['total positives'] for x in max_det100[i * 100 + ci] if x['TP'] is not None
+                x['TP'] / x['total positives'] for x in full[i * 100 + ci] if x['TP'] is not None
             ])
             print(f'\t{ar:.4f}', end='')
         print('\n', end='')
 
     AP = np.mean([x['AP'] for k in full for x in full[k] if x['AP'] is not None])
-    AR100 = np.mean([
-        x['TP'] / x['total positives'] for k in max_det100 for x in max_det100[k] if x['TP'] is not None
+    AR = np.mean([
+        x['TP'] / x['total positives'] for k in full for x in full[k] if x['TP'] is not None
     ])
     ASE = np.mean([x['ASE'] for k in full for x in full[k] if x['ASE'] is not None])
     ATE = np.mean([x['ATE'] for k in full for x in full[k] if x['ATE'] is not None])
 
-    print(f'AP = {AP}')
-    print(f'AR = {AR100}')
-    print(f'ATE = {ATE}')
-    print(f'ASE = {ASE}')
+    new_full = {}
+    for k in full.keys():
+        if abs(math.modf(k)[0] - 0.9) < 1e-6:
+            new_full[k] = full[k]
+    full = new_full
+
+    AR0 = np.mean([
+        x['subTP'][0] / sub_list[0] for k in full for x in full[k]
+    ])
+    AR1 = np.mean([
+        x['subTP'][1] / sub_list[1] for k in full for x in full[k]
+    ])
+    AR2 = np.mean([
+        x['subTP'][2] / sub_list[2] for k in full for x in full[k]
+    ])
+    AR3 = np.mean([
+        x['subTP'][3] / sub_list[3] for k in full for x in full[k]
+    ])
 
     return {
         "AP": AP,
-        "AR": AR100,
+        "AR": AR,
         "ATE": ATE,
         "ASE": ASE,
+        "AR in-domain seen": AR0,
+        "AR out-domain seen": AR1,
+        "AR in-domain unseen": AR2,
+        "AR out-domain unseen": AR3,
     }
 
 
@@ -151,48 +176,48 @@ def _group_detections(dt, gt):
     """ simply group gts and dts on a imageXclass basis """
     bb_info = defaultdict(lambda: {"dt": [], "gt": []})
 
+    print("Calculating semantic similarity...")
     if type(dt[0][0][-1]) is str:
         clip_model, _ = clip.load("ViT-L/14@336px")
         clip_model.cuda()
 
-        text = []
+        text_d = []
+        text_g = []
+        text_feature_d = []
+        text_feature_g = []
         for d_idx in range(len(dt)):
             for d in dt[d_idx]:
                 if len(d[-1]) > 75:
                     d[-1] = d[-1][:75]
-                text.append(clip.tokenize(['a ' + d[-1]]))
+                if d[-1] not in text_d:
+                    text_d.append(d[-1])
+                    text_feature_d.append(clip.tokenize(['a ' + d[-1]]))
         for g_idx in range(len(gt)):
             for g in gt[g_idx]:
                 if len(g[-1]) > 75:
                     g[-1] = g[-1][:75]
-                text.append(clip.tokenize(['a ' + g[-1]]))
+                if g[-1] not in text_g:
+                    text_g.append(g[-1])
+                    text_feature_g.append(clip.tokenize(['a ' + g[-1]]))
 
-        text = torch.stack(text, dim=0).squeeze(1).cuda()
-        text_list = torch.split(text, 300, dim=0)
+        text_feature_g = torch.stack(text_feature_g, dim=0).squeeze(1).cuda()
+        with torch.no_grad():
+            text_feature_g = clip_model.encode_text(text_feature_g)
+            text_feature_g = text_feature_g / text_feature_g.norm(dim=1, keepdim=True)
+
+        text_feature_d = torch.stack(text_feature_d, dim=0).squeeze(1).cuda()
+        text_list = torch.split(text_feature_d, 512, dim=0)
         text_features_list = []
-        print('forward clip')
         for i in tqdm(text_list):
             with torch.no_grad():
                 text_features = clip_model.encode_text(i)
                 text_features = text_features / text_features.norm(dim=1, keepdim=True)
                 text_features_list.append(text_features)
-        text_features = torch.cat(text_features_list, dim=0)
+        text_feature_d = torch.cat(text_features_list, dim=0)
 
-        text_idx = 0
-        for d_idx in range(len(dt)):
-            for d in dt[d_idx]:
-                d[-1] = text_features[text_idx]
-                text_idx += 1
-                bb_info[d_idx, 0]["dt"].append(d)
-        for g_idx in range(len(gt)):
-            for g in gt[g_idx]:
-                g[-1] = text_features[text_idx]
-                text_idx += 1
-                bb_info[g_idx, 0]["gt"].append(g)
+        similarity = text_feature_g @ text_feature_d.t()
+        similarity = similarity.cpu()
 
-        return bb_info
-
-    elif type(dt[0][0][-1]) is torch.Tensor:
         for d_idx in range(len(dt)):
             for d in dt[d_idx]:
                 bb_info[d_idx, 0]["dt"].append(d)
@@ -200,11 +225,10 @@ def _group_detections(dt, gt):
             for g in gt[g_idx]:
                 bb_info[g_idx, 0]["gt"].append(g)
 
-        return bb_info
+        return bb_info, (text_g, text_d, similarity)
 
     else:
         raise ValueError(f'box[-1] must be str. get {type(dt[0][0][-1])}.')
-
 
 
 def _get_area(a):
@@ -213,11 +237,18 @@ def _get_area(a):
     return w * h * l
 
 
-def _jaccard(a, b, clip_thr):
-    wa, ha, la, xa, ya, za, tha, ca = a
-    wb, hb, lb, xb, yb, zb, thb, cb = b
+def _jaccard(a, b, sim_mat):
+    ha, wa, la, xa, ya, za, tha, ca = a
+    hb, wb, lb, xb, yb, zb, thb, _, cb = b
 
-    similarity = ca @ cb.t()
+    if wa > la:
+        wa, la = la, wa
+    if wb > lb:
+        wb, lb = lb, wb
+
+    similarity = sim_mat[2][sim_mat[0].index(cb)][sim_mat[1].index(ca)]
+    if similarity < 0.5:
+        return 0, 0, 0, 0
 
     dis = np.sqrt((xa - xb) ** 2 + (ya - yb) ** 2 + (za - zb) ** 2)
 
@@ -225,22 +256,30 @@ def _jaccard(a, b, clip_thr):
     Ab = wb * hb * lb
     asAi = min(wa, wb) * min(ha, hb) * min(la, lb)
 
-    if similarity > clip_thr:
-        return 1 / (1 + dis), dis, 1 - (asAi / (Aa + Ab - asAi))
-    else:
-        return 0, 0, 0
+
+    return 1 / (1 + dis), dis, 1 - (asAi / (Aa + Ab - asAi)), similarity
 
 
-def _compute_ious(dt, gt, clip_thr):
+def _compute_ious(arg):
     """ compute pairwise ious """
+    dt, gt, sim_mat = arg
 
-    ious = np.zeros((len(dt), len(gt)))
+    ious5 = np.zeros((len(dt), len(gt)))
     ates = np.zeros((len(dt), len(gt)))
     ases = np.zeros((len(dt), len(gt)))
+    sims = np.zeros((len(dt), len(gt)))
+
     for g_idx, g in enumerate(gt):
         for d_idx, d in enumerate(dt):
-            ious[d_idx, g_idx], ates[d_idx, g_idx], ases[d_idx, g_idx] = _jaccard(d, g, clip_thr=clip_thr)
-    return (ious, ates, ases)
+            ious5[d_idx, g_idx], ates[d_idx, g_idx], ases[d_idx, g_idx], sims[d_idx, g_idx] = _jaccard(d, g,
+                                                                                                       sim_mat=sim_mat)
+
+    ious7 = ious5.copy()
+    ious7[sims < 0.7] = 0
+    ious9 = ious5.copy()
+    ious9[sims < 0.9] = 0
+
+    return ((ious5, ates, ases), (ious7, ates, ases), (ious9, ates, ases))
 
 
 def _evaluate_image(dt, gt, ious3, iou_threshold, max_dets=None, area_range=None):
@@ -302,10 +341,12 @@ def _evaluate_image(dt, gt, ious3, iou_threshold, max_dets=None, area_range=None
 
     total_ate = []
     total_ase = []
+    sub_tp = [0, 0, 0, 0]
     for g_idx in range(len(gt)):
         if g_idx in gtm.keys():
             total_ate.append(ates[gtm[g_idx]][g_idx])
             total_ase.append(ases[gtm[g_idx]][g_idx])
+            sub_tp[gt[g_idx][-2]] += 1
     if len(total_ate) > 0:
         ATE = np.mean(total_ate)
         ASE = np.mean(total_ase)
@@ -313,7 +354,7 @@ def _evaluate_image(dt, gt, ious3, iou_threshold, max_dets=None, area_range=None
         ATE = None
         ASE = None
 
-    return {"matched": matched, "NP": n_gts, "ATE": ATE, "ASE": ASE}
+    return {"matched": matched, "NP": n_gts, "ATE": ATE, "ASE": ASE, "subTP": sub_tp}
 
 
 def _compute_ap_recall(matched, NP, recall_thresholds=None):
@@ -348,7 +389,6 @@ def _compute_ap_recall(matched, NP, recall_thresholds=None):
     i_pr = np.maximum.accumulate(pr[::-1])[::-1]
 
     rec_idx = np.searchsorted(rc, recall_thresholds, side="left")
-    n_recalls = len(recall_thresholds)
 
     # get interpolated precision values at the evaluation thresholds
     i_pr = np.array([i_pr[r] if r < len(i_pr) else 0 for r in rec_idx])

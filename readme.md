@@ -2,25 +2,20 @@
 
 <img src="https://github.com/VDIGPKU/OpenAD/blob/main/assets/openad.jpg" width="1000"/>
 
-OpenAD is the first open-world 3D object detection benchmark for autonomous driving. 
-We selected 2,000 scenes from 5 public datasets and annotated 6,597 3D corner cases for each scene. 
-You can use this toolkit to organize data, load data, and evaluate your model with a few simple commands.
-
 ## Update
+
+* 2024/xx/xx -  We have released our paper on [arXiv](TODO).
 
 * 2024/9/10 - We have released OpenAD, and it is currently in beta. 
 We welcome your feedback and suggestions for using this benchmark.
 
 ## Introduction
 
-|  Dataset   | Scenes | Original Obj | Added Obj | Total Obj | Seen  | Unseen |
-|:----------:|:------:|:------------:|:---------:|:---------:|:-----:|:------:|
-| Argoverse2 |  250   |     5422     |    552    |   5974    | 18220 |  1541  |
-|   KITTI    |  309   |     1902     |    363    |   2265    | 9596  | 10165  | 
-|  nuScenes  |  134   |     2019     |    581    |   2600    | 14739 |  5022  | 
-|    ONCE    |  1057  |     157      |   4298    |   4455    | 10706 |  9055  | 
-|   Waymo    |  250   |     3664     |    803    |   4467    | 12557 |  7204  | 
-|   Total    |  2000  |    13164     |   6597    |   19761   |       |        | 
+<img src="https://github.com/VDIGPKU/OpenAD/blob/main/assets/properties.png" width="1000"/>
+
+OpenAD is the first open-world 3D object detection benchmark for autonomous driving. 
+We selected 2,000 scenes from 5 public datasets and annotated 6,597 3D corner cases for each scene. 
+You can use this toolkit to organize data, load data, and evaluate your model with a few simple commands.
 
 ## Data Preparation
 
@@ -66,7 +61,7 @@ create_openad(av2_root='/path/to/argoverse2',
 ```
 
 If you encounter any difficulties in creating data, 
-please raise an issue or send an email to xiazhongyu@pku.edu.cn
+please raise an issue or email xiazhongyu@pku.edu.cn
 
 ## Getting Started
 
@@ -117,7 +112,31 @@ dict_keys(['width', 'height', 'rowMajor', 'camera_internal', 'camera_external', 
 
 **Please make sure ‘training_on’ is correct and make sure the model under test is not trained on the validation set of all five datasets.**
 
-You can directly evaluate your 2D or 3D detection results by:
+You can utilize the following tools to package your prediction results into a specific format and submit them for [online evaluation](TODO):
+
+```python
+dd.submit(pred_list, save_path='result.pkl')
+
+"""
+2D Track: pred_list (list)
+    A list representing the detected bounding boxes.
+    (list)[
+        2000 * (list)[
+            N_bboxes * (list)[ (float)x1, y1, x2, y2, (str)c ]
+        ]
+    ]
+
+3D Track: pred_list (list)
+    A list representing the detected bounding boxes.
+    (list)[
+        2000 * (list)[
+            N_bboxes * (list)[ (float)h, w, l, x, y, z, theta, (str)c ]
+        ]
+    ]
+"""
+```
+
+You can directly evaluate your 2D or 3D detection results on sample data by:
 
 ```python
 dd.evaluate2d(pred_list)
@@ -125,7 +144,7 @@ dd.evaluate2d(pred_list)
 pred_list : list
     A list representing the detected bounding boxes.
     (list)[
-        2000 * (list)[
+        16(num_samples) * (list)[
             N_bboxes * (list)[ (float)x1, y1, x2, y2, (str)c ]
         ]
     ]
@@ -136,31 +155,39 @@ dd.evaluate3d(pred_list)
 pred_list : list
     A list representing the detected bounding boxes.
     (list)[
-        2000 * (list)[
+        16(num_samples) * (list)[
             N_bboxes * (list)[ (float)h, w, l, x, y, z, theta, (str)c ]
         ]
     ]
 """
 ```
 
-For the 2D bounding box, we followed the calculation method of pycocotools, 
-using the clip threshold of {0.5, 0.7, 0.9} and the IoU threshold of {0.5, 0.55, 0.6, ..., 0.85, 0.9} 
-to determine whether it is TP or not and calculate the AP and AR.
+#### Average Precision (AP) and Average Recall (AR)
 
-For the 3D bounding box, we followed the calculation method of nuScenes benchmark, 
-using the clip threshold of {0.5, 0.7, 0.9} and the center distance threshold of {0.5m, 1.0m, 2.0m, 4.0m} 
-to determine whether it is TP or not and calculate the AP and AR.
+The calculation of AP and AR depends on True Positive (TP).
+In OpenAD, the threshold of TP incorporates both positional and semantic scores.
+An object prediction is considered a TP only if it simultaneously meets both the positional and semantic thresholds.
+For 2D object detection, in line with COCO, Intersection over Union (IoU) is used as the positional score. 
+We use the cosine similarity of features from the CLIP model as the semantic score.
+When calculating AP, IoU thresholds ranging from 0.5 to 0.95 with a step size of 0.05 are used, along with semantic similarity thresholds of 0.5, 0.7, and 0.9.
 
-When calculating the above TP metrics, 
-inspired by nuScenes benchmark, this program will also calculate the regression metrics ATE and ASE.
-Average Translation Error (ATE) is euclidean center distance in pixels (2D) or meters (3D).
-Average Scale Error (ASE) is calculated as 1 - IOU after aligning centers and orientation.
+For 3D object detection, the center distance is adopted as the positional score following nuScenes, and we use the same semantic score as the 2D detection task.
+Similar to nuScenes, we adopt a multi-threshold averaging method for AP calculation.
+Specifically, we compute AP across 12 thresholds, combining positional thresholds of 0.5m, 1m, 2m, and 4m with semantic similarity thresholds of 0.5, 0.7, and 0.9, and then average these AP values.
 
-In addition, the evaluation program will divide the evaluation data into four parts, 
-according to whether it belongs to the training data set 
-and whether the object category has been seen during training. 
-the evaluation program will then calculate the above metrics respectively.
-This can evaluate the model's open-scene domain-adaptation ability and open-vocabulary ability respectively.
+The same principle applies to calculating Average Recall (AR) for 2D and 3D object detection tasks.
+Both AP and AR are calculated only for the top 300 predictions.
+
+#### Average Translation Error (ATE) and Average Scale Error (ASE) 
+
+Following nuScenes, we also evaluate the prediction quality of TP objects using regression metrics.
+The Average Translation Error (ATE) refers to the Euclidean center distance, measured in pixels for 2D or meters for 3D.
+The Average Scale Error (ASE) is calculated as `1 - IoU` after aligning the centers and orientations of the predicted and ground truth objects.
+
+#### In/Out Domain & Seen/Unseen AR
+
+To evaluate the model's domain generalization ability and open-vocabulary capability separately, we calculate the AR based on whether the scene is within the training domain and whether the object semantics have been seen during training.
+The positional thresholds for this metric are defined as above, whereas the semantic similarity thresholds are fixed at 0.9.
 
 ### Visualization
 
@@ -185,6 +212,27 @@ dd.visualize_bev(1970)  # show 3D GT bbox and point clouds under BEV
 dd.visualize_pc(1970)  # show aligned multi-frame point clouds under BEV
 ```
 <img src="https://github.com/VDIGPKU/OpenAD/blob/main/assets/vis_pc.jpg" width="400"/>
+
+You can also visualize the predictions by:
+
+```python
+dd.visualize_pred_2d_on_image(idx, your_prediction)
+"""
+your_prediction:
+(list)[
+    N_bboxes * (list)[ (float)x1, y1, x2, y2, (str)c ]
+]
+"""
+
+dd.visualize_pred_3d_on_image(idx, your_prediction)
+dd.visualize_pred_bev(idx, your_prediction)
+"""
+your_prediction:
+(list)[
+    N_bboxes * (list)[ (float)h, w, l, x, y, z, theta, (str)c ]
+]
+"""
+```
 
 ## Licenses
 

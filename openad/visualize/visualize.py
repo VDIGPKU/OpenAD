@@ -51,6 +51,7 @@ def visualize_bev(data_dict, save_path='vis_bev.jpg', xylim=(-40, 40, -20, 60)):
         }
         boxes.append(box)
     for seen, box in zip(data_dict['seen'], boxes):
+        name = box['type']
         h, w, l = box['dimensions']
         x, y, z = box['location']
         rot = box['rotation_y']
@@ -68,10 +69,15 @@ def visualize_bev(data_dict, save_path='vis_bev.jpg', xylim=(-40, 40, -20, 60)):
             [-np.sin(rot), 0, np.cos(rot)]
         ])
         corners = np.dot(corners, rot_matrix.T) + np.array([x, y, z])
-        if seen:
-            rect = plt.Polygon(corners[:, [0, 2]], fill=None, edgecolor='g')
-        else:
-            rect = plt.Polygon(corners[:, [0, 2]], fill=None, edgecolor='r')
+        if seen is True:
+            rect = plt.Polygon(corners[:, [0, 2]], fill=None, linewidth=3, edgecolor='g')
+            plt.text(corners[3][0]+0.1, corners[3][2]+0.1, name, fontsize=20, color='g')
+        elif seen is False:
+            rect = plt.Polygon(corners[:, [0, 2]], fill=None, linewidth=3, edgecolor='r')
+            plt.text(corners[3][0]+0.1, corners[3][2]+0.1, name, fontsize=20, color='r')
+        elif seen is None:
+            rect = plt.Polygon(corners[:, [0, 2]], fill=None, linewidth=3, edgecolor='b')
+            plt.text(corners[3][0]+0.1, corners[3][2]+0.1, name, fontsize=20, color='b')
         ax.add_patch(rect)
     ax.set_xlim(xylim[0], xylim[1])
     ax.set_ylim(xylim[2], xylim[3])
@@ -89,16 +95,21 @@ def visualize_2d_on_image(data_dict, save_path='vis_2d_on_image.jpg'):
     for seen, anno in zip(data_dict['seen'], kitti_annotations):
         name = anno[0]
         x1, y1, x2, y2 = anno[4:8]
-        if seen:
-            draw_2d_box(image, (x1, y1, x2, y2), color=(0, 255, 0))
-            cv2.putText(image, name, (int(x1), int(y1)), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-        else:
-            draw_2d_box(image, (x1, y1, x2, y2), color=(0, 0, 255))
-            cv2.putText(image, name, (int(x1), int(y1)), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
 
-    cv2.putText(image, 'dataset: ' + data_dict['dataset'], (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
-    cv2.putText(image, 'seen object', (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-    cv2.putText(image, 'unseen object', (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+        if seen is True:
+            draw_2d_box(image, (x1, y1, x2, y2), color=(124, 255, 124))
+            cv2.putText(image, name, (int(x1), int(y1)), cv2.FONT_HERSHEY_SIMPLEX, 1, (124, 255, 124), 2)
+        elif seen is False:
+            draw_2d_box(image, (x1, y1, x2, y2), color=(0, 127, 255))
+            cv2.putText(image, name, (int(x1), int(y1)), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 127, 255), 2)
+        elif seen is None:
+            draw_2d_box(image, (x1, y1, x2, y2), color=(255, 184, 99))
+            cv2.putText(image, name, (int(x1), int(y1)), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 184, 99), 2)
+
+    if data_dict['seen'][0] is not None:
+        cv2.putText(image, 'dataset: ' + data_dict['dataset'], (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 184, 99), 2)
+        cv2.putText(image, 'seen object', (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (124, 255, 124), 2)
+        cv2.putText(image, 'unseen object', (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 127, 255), 2)
     cv2.imwrite(save_path, image)
     print(f"Annotated image saved at {save_path}")
 
@@ -119,15 +130,25 @@ def visualize_3d_on_image(data_dict, save_path='vis_3d_on_image.jpg'):
     cam_intrinsic = np.hstack([cam_intrinsic, np.zeros((3, 1), dtype=np.float32)])
 
     for seen, anno in zip(data_dict['seen'], kitti_annotations):
+        name = anno[0]
         box_3d = Object3d(anno)
         corners_2d, corners_3d = compute_box_3d(box_3d, cam_intrinsic)
-        if seen:
-            draw_projected_box3d(image, corners_2d, color=(0, 255, 0))
-        else:
-            draw_projected_box3d(image, corners_2d, color=(0, 0, 255))
+        if seen is True:
+            draw_projected_box3d(image, corners_2d, color=(124, 255, 124))
+            cv2.putText(image, name, (int(corners_2d[3][0]), int(corners_2d[3][1])), cv2.FONT_HERSHEY_SIMPLEX, 1,
+                        (124, 255, 124), 2)
+        elif seen is False:
+            draw_projected_box3d(image, corners_2d, color=(0, 127, 255))
+            cv2.putText(image, name, (int(corners_2d[3][0]), int(corners_2d[3][1])), cv2.FONT_HERSHEY_SIMPLEX, 1,
+                        (0, 127, 255), 2)
+        elif seen is None:
+            draw_projected_box3d(image, corners_2d, color=(255, 184, 99))
+            cv2.putText(image, name, (int(corners_2d[3][0]), int(corners_2d[3][1])), cv2.FONT_HERSHEY_SIMPLEX, 1,
+                        (255, 184, 99), 2)
 
-    cv2.putText(image, 'dataset: ' + data_dict['dataset'], (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
-    cv2.putText(image, 'seen object', (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-    cv2.putText(image, 'unseen object', (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+    if data_dict['seen'][0] is not None:
+        cv2.putText(image, 'dataset: ' + data_dict['dataset'], (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 184, 99), 2)
+        cv2.putText(image, 'seen object', (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (124, 255, 124), 2)
+        cv2.putText(image, 'unseen object', (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 127, 255), 2)
     cv2.imwrite(save_path, image)
     print(f"Annotated image saved at {save_path}")

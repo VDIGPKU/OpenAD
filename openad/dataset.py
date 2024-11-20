@@ -1,18 +1,20 @@
 import os
 import torch
 from torch.utils.data import Dataset
+import clip
 import json
 import torchvision.transforms as transforms
 import cv2
 import open3d as o3d
 import numpy as np
+import pickle
 from .visualize import visualize_pc, visualize_bev, visualize_3d_on_image, visualize_2d_on_image
 from .evaluate import get_2d_summary, get_3d_summary
 
 
 class OpenAD(Dataset):
     """
-    OpenAD: An Open-World Autonomous Driving Scenes Benchmark for 3D Object Detection
+    OpenAD: Open-World Autonomous Driving Scenes Benchmark for 3D Object Detection
     VDIG @ Peking University
 
     init args:
@@ -46,6 +48,7 @@ class OpenAD(Dataset):
         self.data = list(range(2000))
         self.dataset_list = ['av2', 'kitti', 'nuscenes', 'once', 'waymo']
         self.frames = frames
+        self.sample_list = [41, 123, 251, 275, 560, 573, 574, 583, 1749, 1753, 1760, 1765, 1908, 1940, 1970, 1986]
 
     def __len__(self):
         return len(self.data)
@@ -122,6 +125,167 @@ class OpenAD(Dataset):
         data_dict = self.__get_ann(data_dict, idx)
         visualize_3d_on_image(data_dict, save_path=save_path)
 
+    def visualize_pred_bev(self, idx, pred, save_path='vis_pred_bev.jpg', xylim=(-40, 40, -20, 60)):
+        data_dict = self.__getitem__(idx)
+        for ibox in range(len(pred)):
+            ori_box = pred[ibox]
+            new_box = [ori_box[7]] + [0] * 7 + ori_box[0:7] + [1]
+            pred[ibox] = new_box
+        data_dict['annotations'] = pred
+        data_dict['seen'] = [None] * len(pred)
+        visualize_bev(data_dict, save_path=save_path, xylim=xylim)
+
+    def visualize_pred_2d_on_image(self, idx, pred, save_path='vis_pred_2d_on_image.jpg'):
+        data_dict = self.__getitem__(idx)
+        for ibox in range(len(pred)):
+            ori_box = pred[ibox]
+            new_box = [ori_box[4]] + [0] * 3 + ori_box[0:4] + [0] * 7 + [1]
+            pred[ibox] = new_box
+        data_dict['annotations'] = pred
+        data_dict['seen'] = [None] * len(pred)
+        visualize_2d_on_image(data_dict, save_path=save_path)
+
+    def visualize_pred_3d_on_image(self, idx, pred, save_path='vis_pred_3d_on_image.jpg'):
+        data_dict = self.__getitem__(idx)
+        for ibox in range(len(pred)):
+            ori_box = pred[ibox]
+            new_box = [ori_box[7]] + [0] * 7 + ori_box[0:7] + [1]
+            pred[ibox] = new_box
+        data_dict['annotations'] = pred
+        data_dict['seen'] = [None] * len(pred)
+        visualize_3d_on_image(data_dict, save_path=save_path)
+
+    def submit(self, pred_list, save_path='result.pkl'):
+        """
+        2D Track: pred_list (list)
+            A list representing the detected bounding boxes.
+            (list)[
+                2000 * (list)[
+                    N_bboxes * (list)[ (float)x1, y1, x2, y2, (str)c ]
+                ]
+            ]
+
+        3D Track: pred_list (list)
+            A list representing the detected bounding boxes.
+            (list)[
+                2000 * (list)[
+                    N_bboxes * (list)[ (float)h, w, l, x, y, z, theta, (str)c ]
+                ]
+            ]
+        """
+        assert len(pred_list) == 2000
+        for i in range(len(pred_list)):
+            if len(pred_list[i]) > 300:
+                pred_list[i] = pred_list[i][:300]
+                print(
+                    f'Number of predicted objects exceeds 300, only the first 300 will be calculated. (data index {i})')
+        if type(pred_list[0][0][-1]) is str:
+            clip_model, _ = clip.load("ViT-L/14@336px")
+            clip_model.cuda()
+            text_d = []
+            text_feature_d = []
+            for d_idx in range(len(pred_list)):
+                for d in pred_list[d_idx]:
+                    if len(d[-1]) > 75:
+                        d[-1] = d[-1][:75]
+                    if d[-1] not in text_d:
+                        text_d.append(d[-1])
+                        text_feature_d.append(clip.tokenize(['a ' + d[-1]]))
+            text_feature_d = torch.stack(text_feature_d, dim=0).squeeze(1).cuda()
+            text_list = torch.split(text_feature_d, 512, dim=0)
+            text_features_list = []
+            for i in text_list:
+                with torch.no_grad():
+                    text_features = clip_model.encode_text(i)
+                    text_features = text_features / text_features.norm(dim=1, keepdim=True)
+                    text_features_list.append(text_features)
+            text_feature_d = torch.cat(text_features_list, dim=0)
+            text_feature_d = text_feature_d.cpu().numpy()
+
+            save_list = [pred_list, text_d, text_feature_d, self.training_on]
+            with open(save_path, 'wb') as file:
+                pickle.dump(save_list, file)
+            print("Result file saved at", os.path.abspath(save_path))
+        else:
+            raise ValueError(f'box[-1] must be str. get {type(pred_list[0][0][-1])}.')
+
+    def evaluate2d(self, pred_list, split='sample'):
+        """
+        pred_list : list
+            A list representing the detected bounding boxes.
+            (list)[
+                16(num_sample_data) * (list)[
+                    N_bboxes * (list)[ (float)x1, y1, x2, y2, (str)c ]
+                ]
+            ]
+        """
+        if split == 'sample':
+            assert len(pred_list) == 16
+            self._evaluate(pred_list, bbox_type='2D')
+        elif split == 'full':
+            assert len(pred_list) == 2000
+            self._evaluate(pred_list, bbox_type='2D')
+        else:
+            raise ValueError("split must be 'full' or 'sample'")
+
+    def evaluate3d(self, pred_list, split='sample'):
+        """
+        pred_list : list
+            A list representing the detected bounding boxes.
+            (list)[
+                16(num_sample_data) * (list)[
+                    N_bboxes * (list)[ (float)h, w, l, x, y, z, theta, (str)c ]
+                ]
+            ]
+        """
+        if split == 'sample':
+            assert len(pred_list) == 16
+            self._evaluate(pred_list, bbox_type='3D')
+        elif split == 'full':
+            assert len(pred_list) == 2000
+            self._evaluate(pred_list, bbox_type='3D')
+        else:
+            raise ValueError("split must be 'full' or 'sample'")
+
+    '''
+        av2       range(0, 250)
+        kitti     range(250, 250 + 309)
+        nuscenes  range(250 + 309, 250 + 309 + 134)
+        once      range(250 + 309 + 134, 250 + 309 + 134 + 1057)
+        waymo     range(250 + 309 + 134 + 1057, 2000)
+    '''
+
+    def _cal_dist_volume(self):
+        import math
+        dist = [[0] * 22, [0] * 22, [0] * 22, [0] * 22, [0] * 22]
+        vol = [[0] * 11, [0] * 11, [0] * 11, [0] * 11, [0] * 11]
+        vol_split = [0.02, 0.05, 0.1, 0.5, 1, 5, 10, 15, 20, 30]
+        start = [0, 250, 250 + 309, 250 + 309 + 134, 250 + 309 + 134 + 1057]
+        end = [250, 250 + 309, 250 + 309 + 134, 250 + 309 + 134 + 1057, 2000]
+        for i in range(5):
+            for isc in range(start[i], end[i]):
+                print(isc)
+                data_dict = {'width': 1000, 'height': 1000}
+                data_dict = self.__get_ann(data_dict, isc)
+                anns = data_dict['annotations']
+                for parts in anns:
+                    h = float(parts[8])
+                    w = float(parts[9])
+                    l = float(parts[10])
+                    x = float(parts[11])
+                    z = float(parts[13])
+                    d = math.sqrt(x * x + z * z)
+                    dd = math.floor(d / 10)
+                    vvol = h * w * l
+                    vv = 10
+                    for vi in range(10):
+                        if vvol < vol_split[vi]:
+                            vv = vi
+                            break
+                    dist[i][dd] += 1
+                    vol[i][vv] += 1
+        return dist, vol
+
     def __get_ann(self, ret_dict, idx):
         annotations = []
         seen_list = []
@@ -150,119 +314,95 @@ class OpenAD(Dataset):
         ret_dict['seen'] = seen_list
         return ret_dict
 
-    def _evaluate(self, pred_list, bbox_type):
+    def _evaluate(self, pred_list, bbox_type, split='full'):
         gt_list = []
-        in_domain_seen_gt_list = []
-        in_domain_unseen_gt_list = []
-        out_domain_seen_gt_list = []
-        out_domain_unseen_gt_list = []
-        in_domain_pred_list = []
-        out_domain_pred_list = []
-        for idx in range(2000):
+        sub_list = [0, 0, 0, 0]
+        if split == 'full':
+            data_list = list(range(2000))
+        elif split == 'sample':
+            data_list = self.sample_list
+        for idx in data_list:
             with open(os.path.join(self.dataroot, 'infos', str(idx) + '.json'), 'r', encoding='utf-8') as file:
                 ret_dict = json.load(file)
             ret_dict = self.__get_ann(ret_dict, idx)
-            seen_gt = []
-            unseen_gt = []
+            gt = []
             for gtb, seen in zip(ret_dict['annotations'], ret_dict['seen']):
+                if seen and self.training_on[ret_dict['dataset']]:
+                    subc = 0
+                elif seen and not self.training_on[ret_dict['dataset']]:
+                    subc = 1
+                elif not seen and self.training_on[ret_dict['dataset']]:
+                    subc = 2
+                else:
+                    subc = 3
+                sub_list[subc] += 1
                 if bbox_type == '2D':
-                    gtb = gtb[4:8] + [gtb[0]]
+                    gtb = gtb[4:8] + [subc, gtb[0]]
                 else:
-                    gtb = gtb[8:15] + [gtb[0]]
-                if seen:
-                    seen_gt.append(gtb)
-                else:
-                    unseen_gt.append(gtb)
-            if self.training_on[ret_dict['dataset']]:
-                in_domain_seen_gt_list.append(seen_gt)
-                in_domain_unseen_gt_list.append(unseen_gt)
-                in_domain_pred_list.append(pred_list[idx])
-                gt_list.append(seen_gt + unseen_gt)
-            else:
-                out_domain_seen_gt_list.append(seen_gt)
-                out_domain_unseen_gt_list.append(unseen_gt)
-                out_domain_pred_list.append(pred_list[idx])
-                gt_list.append(seen_gt + unseen_gt)
-
-        in_domain_seen_cnt = 0
-        in_domain_unseen_cnt = 0
-        out_domain_seen_cnt = 0
-        out_domain_unseen_cnt = 0
-        for s, uns in zip(in_domain_seen_gt_list, in_domain_unseen_gt_list):
-            in_domain_seen_cnt += len(s)
-            in_domain_unseen_cnt += len(uns)
-        for s, uns in zip(out_domain_seen_gt_list, out_domain_unseen_gt_list):
-            out_domain_seen_cnt += len(s)
-            out_domain_unseen_cnt += len(uns)
+                    gtb = gtb[8:15] + [subc, gtb[0]]
+                gt.append(gtb)
+            gt_list.append(gt)
 
         print('---Evaluate Setting---')
         print(f'type: {bbox_type}, total scene: {len(gt_list)}, '
-              f'total object: {in_domain_seen_cnt + in_domain_unseen_cnt + out_domain_seen_cnt + out_domain_unseen_cnt}, '
+              f'total objects: {sum(sub_list)}, '
               f'training on {self.training_on}, '
-              f'in-domain scene: {len(in_domain_seen_gt_list)}, '
-              f'in-domain seen object: {in_domain_seen_cnt}, '
-              f'in-domain unseen object: {in_domain_unseen_cnt}, '
-              f'out-domain scene: {len(out_domain_seen_gt_list)}, '
-              f'out-domain seen object: {out_domain_seen_cnt}, '
-              f'out-domain unseen object: {out_domain_unseen_cnt}, '
-              )
+              f'in-domain seen objects: {sub_list[0]}, '
+              f'out-domain seen objects: {sub_list[1]}, '
+              f'in-domain unseen objects: {sub_list[2]}, '
+              f'out-domain unseen objects: {sub_list[3]}.')
 
         if bbox_type == '2D':
-            print('OVERALL: ', end='')
-            overall_metrics = get_2d_summary(gt_list, pred_list)
-            print('IN-DOMAIN SEEN: ', end='')
-            in_domain_seen_metrics = get_2d_summary(in_domain_seen_gt_list, in_domain_pred_list)
-            print('IN-DOMAIN UNSEEN: ', end='')
-            in_domain_unseen_metrics = get_2d_summary(in_domain_unseen_gt_list, in_domain_pred_list)
-            print('OUT-DOMAIN SEEN: ', end='')
-            out_domain_seen_metrics = get_2d_summary(out_domain_seen_gt_list, out_domain_pred_list)
-            print('OUT-DOMAIN UNSEEN: ', end='')
-            out_domain_unseen_metrics = get_2d_summary(out_domain_unseen_gt_list, out_domain_pred_list)
+            overall_metrics = get_2d_summary(gt_list, pred_list, sub_list)
         else:
-            print('OVERALL: ', end='')
-            overall_metrics = get_3d_summary(gt_list, pred_list)
-            print('IN-DOMAIN SEEN: ', end='')
-            in_domain_seen_metrics = get_3d_summary(in_domain_seen_gt_list, in_domain_pred_list)
-            print('IN-DOMAIN UNSEEN: ', end='')
-            in_domain_unseen_metrics = get_3d_summary(in_domain_unseen_gt_list, in_domain_pred_list)
-            print('OUT-DOMAIN SEEN: ', end='')
-            out_domain_seen_metrics = get_3d_summary(out_domain_seen_gt_list, out_domain_pred_list)
-            print('OUT-DOMAIN UNSEEN: ', end='')
-            out_domain_unseen_metrics = get_3d_summary(out_domain_unseen_gt_list, out_domain_pred_list)
+            overall_metrics = get_3d_summary(gt_list, pred_list, sub_list)
 
         print('---Evaluate Summary---')
-        print(f'OpenAD\t\t\tAP ↑ \tAR ↑ \tATE ↓\tASE ↓')
-        for title, m in zip(['in-domain seen\t', 'in-domain unseen', 'out-domain seen\t',
-                             'out-domain unseen', 'overall\t\t'],
-                            [in_domain_seen_metrics, in_domain_unseen_metrics, out_domain_seen_metrics,
-                             out_domain_unseen_metrics, overall_metrics]):
-            print(title, end='')
-            for item in ['AP', 'AR', 'ATE', 'ASE']:
-                print(f'\t{m[item]:.4f}', end='')
-            print()
+        for k, v in overall_metrics.items():
+            print(f'{k}: {v:.4f}')
 
-    def evaluate2d(self, pred_list):
-        """
-        pred_list : list
-            A list representing the detected bounding boxes.
-            (list)[
-                2000 * (list)[
-                    N_bboxes * (list)[ (float)x1, y1, x2, y2, (str)c ]
-                ]
-            ]
-        """
-        assert len(pred_list) == 2000
-        self._evaluate(pred_list, bbox_type='2D')
+    def _save_gt(self):
+        gt_list = []
+        for idx in range(2000):
+            annotations = []
+            with open(os.path.join(self.dataroot, 'infos', str(idx) + '.json'), 'r', encoding='utf-8') as file:
+                ret_dict = json.load(file)
+            with open(os.path.join(self.dataroot, 'annotations', str(idx) + '.txt'), 'r', encoding='utf-8') as file:
+                lines = file.readlines()
+            for line in lines:
+                ann = line.strip().split(' ')[5:]
+                seen = line.strip().split(' ')[:5]
+                ann[1:] = list(map(float, ann[1:]))
+                x1, y1, x2, y2 = ann[4:8]
+                x1 = 0 if x1 < 0 else x1
+                y1 = 0 if y1 < 0 else y1
+                x2 = ret_dict['width'] if x2 > ret_dict['width'] else x2
+                y2 = ret_dict['height'] if y2 > ret_dict['height'] else y2
+                ann[4:8] = [x1, y1, x2, y2]
+                annotations.append(ann[4:8] + ann[8:15] + seen + [ann[0]])
+            gt_list.append(annotations)
+        print(gt_list[0][0])
 
-    def evaluate3d(self, pred_list):
-        """
-        pred_list : list
-            A list representing the detected bounding boxes.
-            (list)[
-                2000 * (list)[
-                    N_bboxes * (list)[ (float)h, w, l, x, y, z, theta, (str)c ]
-                ]
-            ]
-        """
-        assert len(pred_list) == 2000
-        self._evaluate(pred_list, bbox_type='3D')
+        clip_model, _ = clip.load("ViT-L/14@336px")
+        clip_model.cuda()
+
+        text_g = []
+        text_feature_g = []
+        for g_idx in range(len(gt_list)):
+            for g in gt_list[g_idx]:
+                if len(g[-1]) > 75:
+                    g[-1] = g[-1][:75]
+                if g[-1] not in text_g:
+                    text_g.append(g[-1])
+                    text_feature_g.append(clip.tokenize(['a ' + g[-1]]))
+
+        text_feature_g = torch.stack(text_feature_g, dim=0).squeeze(1).cuda()
+        with torch.no_grad():
+            text_feature_g = clip_model.encode_text(text_feature_g)
+            text_feature_g = text_feature_g / text_feature_g.norm(dim=1, keepdim=True)
+        text_feature_g = text_feature_g.cpu().numpy()
+
+        save_list = [gt_list, text_g, text_feature_g]
+        with open('gt.pkl', 'wb') as file:
+            pickle.dump(save_list, file)
+        print("GT saved.")

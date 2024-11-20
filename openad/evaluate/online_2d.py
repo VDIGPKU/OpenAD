@@ -4,48 +4,88 @@ version ported from https://github.com/cocodataset/cocoapi/blob/master/PythonAPI
 
 from collections import defaultdict
 import numpy as np
-import clip
-import torch
 from tqdm import tqdm
 from multiprocessing import Pool
 import math
+import pickle
 
 
-def get_2d_summary(groundtruth_bbs, detected_bbs, sub_list):
+def main(dt_path='result.pkl', gt_path='gt.pkl'):
     """Calculate the AP and AR for OpenAD,
         AP @ IoU=0.5:0.95:0.05 x Clip=0.5:0.9:0.2 for maxinum 500 pred per data
         AR @ IoU=0.5:0.95:0.05 x Clip=0.5:0.9:0.2 for maxinum 100 pred per data
 
     Parameters
-        ----------
-            groundtruth_bbs : list
-                A list representing the ground-truth bounding boxes.
-                (list)[
-                    N_images * (list)[
-                        N_bboxes * (list)[ (float)x1, y1, x2, y2, seen, (str)c ]
-                    ]
-                ]
-            detected_bbs : list
-                A list representing the detected bounding boxes.
-                (list)[
-                    N_images * (list)[
-                        N_bboxes * (list)[ (float)x1, y1, x2, y2, (str)c ]
-                    ]
-                ]
+        dt_path (str): user file uploaded
+        gt_path (str): ground truth file
     Returns:
             A dictionary with one entry for each metric.
     """
 
     print('Evaluating OpenAD 2D Results......')
 
-    assert len(groundtruth_bbs) == len(detected_bbs)
-    for i in range(len(detected_bbs)):
-        if len(detected_bbs[i]) > 300:
-            detected_bbs[i] = detected_bbs[i][:300]
-            print(f'Number of predicted objects exceeds 300, only the first 300 will be calculated. (data index {i})')
-
     # separate bbs per image X class
-    _bbs, sim_mat = _group_detections(detected_bbs, groundtruth_bbs)
+    _bbs = defaultdict(lambda: {"dt": [], "gt": []})
+
+    print("Calculating semantic similarity...")
+
+    with open(dt_path, 'rb') as file:
+        dt, text_d, text_feature_d, training_on = pickle.load(file)
+    with open(gt_path, 'rb') as file:
+        gt, text_g, text_feature_g = pickle.load(file)
+
+    sub_list = [0, 0, 0, 0]
+    dataset_se = {
+        'av2': (0, 250),
+        'kitti': (250, 250 + 309),
+        'nuscenes': (250 + 309, 250 + 309 + 134),
+        'once': (250 + 309 + 134, 250 + 309 + 134 + 1057),
+        'waymo': (250 + 309 + 134 + 1057, 2000),
+    }
+    for i in range(2000):
+        id_cnt = 0
+        for dataset in dataset_se.keys():
+            if training_on[dataset] and dataset_se[dataset][0] <= i < dataset_se[dataset][1]:
+                id_cnt = 1
+        for j in range(len(gt[i])):
+            box2d = gt[i][j][0:4]
+            box3d = gt[i][j][4:11]
+            seen = gt[i][j][11:16]
+            cls = gt[i][j][-1]
+            seen_cnt = 0
+            for di, dataset in enumerate(dataset_se.keys()):
+                if training_on[dataset]:
+                    seen_cnt += int(seen[di])
+            if seen_cnt > 0 and id_cnt > 0:
+                subc = 0
+            elif seen_cnt > 0 and id_cnt == 0:
+                subc = 1
+            elif seen_cnt == 0 and id_cnt > 0:
+                subc = 2
+            else:
+                subc = 3
+            gt[i][j] = box2d + [subc, cls]
+            sub_list[subc] += 1
+    print(sub_list)
+    similarity = text_feature_g @ text_feature_d.T
+
+    print('---Evaluate Setting---')
+    print(f'type: 2D, total scene: {len(gt)}, '
+          f'total objects: {sum(sub_list)}, '
+          f'training on {training_on}, '
+          f'in-domain seen objects: {sub_list[0]}, '
+          f'out-domain seen objects: {sub_list[1]}, '
+          f'in-domain unseen objects: {sub_list[2]}, '
+          f'out-domain unseen objects: {sub_list[3]}.')
+
+    for d_idx in range(len(dt)):
+        for d in dt[d_idx]:
+            _bbs[d_idx, 0]["dt"].append(d)
+    for g_idx in range(len(gt)):
+        for g in gt[g_idx]:
+            _bbs[g_idx, 0]["gt"].append(g)
+
+    sim_mat = (text_g, text_d, similarity)
 
     # pairwise ious
     clip_thresholds = [0.5, 0.7, 0.9]
@@ -61,6 +101,7 @@ def get_2d_summary(groundtruth_bbs, detected_bbs, sub_list):
     }
 
     print("Matching and Calculating AP/AR...")
+
     def _evaluate(iou_threshold, clip_threshold, max_dets):
         # accumulate evaluations
         if clip_threshold == 0.5:
@@ -147,88 +188,27 @@ def get_2d_summary(groundtruth_bbs, detected_bbs, sub_list):
             new_full[k] = full[k]
     full = new_full
 
-    AR0 = np.mean([
-        x['subTP'][0] / sub_list[0] for k in full for x in full[k]
-    ])
-    AR1 = np.mean([
-        x['subTP'][1] / sub_list[1] for k in full for x in full[k]
-    ])
-    AR2 = np.mean([
-        x['subTP'][2] / sub_list[2] for k in full for x in full[k]
-    ])
-    AR3 = np.mean([
-        x['subTP'][3] / sub_list[3] for k in full for x in full[k]
-    ])
+    subAR = [None, None, None, None]
+    for idx in range(4):
+        if sub_list[idx] > 0:
+            subAR[idx] = np.mean([x['subTP'][idx] / sub_list[idx] for k in full for x in full[k]])
 
-    return {
+    overall_metrics = {
         "AP": AP,
         "AR": AR,
         "ATE": ATE,
         "ASE": ASE,
-        "AR in-domain seen": AR0,
-        "AR out-domain seen": AR1,
-        "AR in-domain unseen": AR2,
-        "AR out-domain unseen": AR3,
+        "AR in-domain seen": subAR[0],
+        "AR out-domain seen": subAR[1],
+        "AR in-domain unseen": subAR[2],
+        "AR out-domain unseen": subAR[3],
     }
 
+    print('---Evaluate Summary---')
+    for k, v in overall_metrics.items():
+        print(f'{k}: {v:.4f}')
 
-def _group_detections(dt, gt):
-    """ simply group gts and dts on a imageXclass basis """
-    bb_info = defaultdict(lambda: {"dt": [], "gt": []})
-
-    print("Calculating semantic similarity...")
-    if type(dt[0][0][-1]) is str:
-        clip_model, _ = clip.load("ViT-L/14@336px")
-        clip_model.cuda()
-
-        text_d = []
-        text_g = []
-        text_feature_d = []
-        text_feature_g = []
-        for d_idx in range(len(dt)):
-            for d in dt[d_idx]:
-                if len(d[-1]) > 75:
-                    d[-1] = d[-1][:75]
-                if d[-1] not in text_d:
-                    text_d.append(d[-1])
-                    text_feature_d.append(clip.tokenize(['a ' + d[-1]]))
-        for g_idx in range(len(gt)):
-            for g in gt[g_idx]:
-                if len(g[-1]) > 75:
-                    g[-1] = g[-1][:75]
-                if g[-1] not in text_g:
-                    text_g.append(g[-1])
-                    text_feature_g.append(clip.tokenize(['a ' + g[-1]]))
-
-        text_feature_g = torch.stack(text_feature_g, dim=0).squeeze(1).cuda()
-        with torch.no_grad():
-            text_feature_g = clip_model.encode_text(text_feature_g)
-            text_feature_g = text_feature_g / text_feature_g.norm(dim=1, keepdim=True)
-
-        text_feature_d = torch.stack(text_feature_d, dim=0).squeeze(1).cuda()
-        text_list = torch.split(text_feature_d, 512, dim=0)
-        text_features_list = []
-        for i in tqdm(text_list):
-            with torch.no_grad():
-                text_features = clip_model.encode_text(i)
-                text_features = text_features / text_features.norm(dim=1, keepdim=True)
-                text_features_list.append(text_features)
-        text_feature_d = torch.cat(text_features_list, dim=0)
-
-        similarity = text_feature_g @ text_feature_d.t()
-        similarity = similarity.cpu()
-
-        for d_idx in range(len(dt)):
-            for d in dt[d_idx]:
-                bb_info[d_idx, 0]["dt"].append(d)
-        for g_idx in range(len(gt)):
-            for g in gt[g_idx]:
-                bb_info[g_idx, 0]["gt"].append(g)
-
-        return bb_info, (text_g, text_d, similarity)
-
-    else:
-        raise ValueError(f'box[-1] must be str. get {type(dt[0][0][-1])}.')
+    return overall_metrics
 
 
 def _get_area(a):
