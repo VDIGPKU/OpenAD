@@ -29,10 +29,9 @@ You need to download the dataset [nuScenes](https://www.nuscenes.org/nuscenes),
 [ONCE](https://once-for-auto-driving.github.io/) and 
 [Waymo](https://waymo.com/open/), 
 download the newly added annotation and index file (openad.zip
-[Google Drive](https://drive.google.com/file/d/1DVguskUEqgynt6ZET54vmV4sGvhWtw40/view?usp=drive_link)
+[Google Drive](https://drive.google.com/file/d/1u1k1-FSjK_ezttx5AS8FuabkRybc1meA/view?usp=drive_link)
 or
-[PKU Drive](https://disk.pku.edu.cn/link/AAB6C49977A1F247D5BC8DA923EB030D54)
-).
+[PKU Drive](https://disk.pku.edu.cn/link/AA49F9C955E80240988567387249E82E09).
 
 2. Install [PyTorch](https://pytorch.org/get-started/locally/) and [CLIP](https://github.com/openai/CLIP).
 
