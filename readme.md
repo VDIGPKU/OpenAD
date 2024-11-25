@@ -4,9 +4,11 @@
 
 ## Update
 
-* 2024/xx/xx -  We have released our paper on [arXiv](TODO).
+* 2024/xx/xx - The online evaluation for OpenAD has been opened. Test your model on [EvalAI - OpenAD 2D](https://eval.ai/web/challenges/challenge-page/2416/overview) and [EvalAI - OpenAD 3D](https://eval.ai/web/challenges/challenge-page/2414/overview)!
 
-* 2024/9/10 - We have released OpenAD, and it is currently in beta. 
+* 2024/xx/xx - We have released our paper on [arXiv](TODO).
+
+* 2024/9/10 - We have released OpenAD, which is currently in beta. 
 We welcome your feedback and suggestions for using this benchmark.
 
 ## Introduction
@@ -14,8 +16,13 @@ We welcome your feedback and suggestions for using this benchmark.
 <img src="https://github.com/VDIGPKU/OpenAD/blob/main/assets/properties.png" width="1000"/>
 
 OpenAD is the first open-world 3D object detection benchmark for autonomous driving. 
-We selected 2,000 scenes from 5 public datasets and annotated 6,597 3D corner cases for these scenes. 
-You can use this toolkit to organize data, load data, and evaluate your model with a few simple commands.
+We meticulously selected 2,000 scenes from 5 public datasets and annotated 6,597 3D corner cases for these scenes. 
+Together with the original annotations of these scenes, there are 19,761 objects belonging to 206 different categories.
+
+You can utilize OpenAD to evaluate your model's open-world capabilities, 
+encompassing scene generalization, cross-vehicle-type adaptability, open-vocabulary proficiency, and corner case detection aptitude.
+
+You can use this toolkit to organize data, load data, and evaluate your model with simple commands.
 
 ## Data Preparation
 
