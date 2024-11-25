@@ -1,4 +1,4 @@
-# OpenAD: An Open-World Autonomous Driving Scenes Benchmark for 3D Object Detection
+# OpenAD: Open-World Autonomous Driving Benchmark for 3D Object Detection
 
 <img src="https://github.com/VDIGPKU/OpenAD/blob/main/assets/openad.jpg" width="1000"/>
 
