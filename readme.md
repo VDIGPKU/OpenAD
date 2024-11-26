@@ -35,7 +35,7 @@ You need to download the dataset [nuScenes](https://www.nuscenes.org/nuscenes),
 [Kitti](https://www.cvlibs.net/datasets/kitti/eval_object.php?obj_benchmark=3d), 
 [ONCE](https://once-for-auto-driving.github.io/) and 
 [Waymo](https://waymo.com/open/), 
-download the newly added annotation and index file (openad.zip
+download the newly added annotation and index file (OpenAD.zip)
 [Google Drive](https://drive.google.com/file/d/1u1k1-FSjK_ezttx5AS8FuabkRybc1meA/view?usp=drive_link)
 or
 [PKU Drive](https://disk.pku.edu.cn/link/AA49F9C955E80240988567387249E82E09).
