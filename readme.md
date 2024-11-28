@@ -4,9 +4,9 @@
 
 ## Update
 
-* 2024/xx/xx - The online evaluation for OpenAD has been opened. Test your model on [EvalAI - OpenAD 2D](https://eval.ai/web/challenges/challenge-page/2416/overview) and [EvalAI - OpenAD 3D](https://eval.ai/web/challenges/challenge-page/2414/overview)!
+* 2024/11/26 - The online evaluation for OpenAD has been opened. Test your model on [EvalAI-OpenAD-2D](https://eval.ai/web/challenges/challenge-page/2417/overview) and [EvalAI-OpenAD-3D](https://eval.ai/web/challenges/challenge-page/2418/overview)!
 
-* 2024/xx/xx - We have released our paper on [arXiv](TODO).
+* 2024/11/26 - We have released our paper on [arXiv](https://arxiv.org/abs/2411.17761).
 
 * 2024/9/10 - We have released OpenAD, which is currently in beta. 
 We welcome your feedback and suggestions for using this benchmark.
