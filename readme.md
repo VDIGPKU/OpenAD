@@ -123,7 +123,7 @@ dict_keys(['image', 'image_path', 'points', 'lidar_past2now'])
 
 **Please make sure ‘training_on’ is correct and make sure the model under test is not trained on the validation set of all five datasets.**
 
-You can utilize the following tools to package your prediction results into a specific format and submit them for [online evaluation](TODO):
+You can utilize the following tools to package your prediction results into a specific format and submit them for online evaluation ([OpenAD-2D](https://eval.ai/web/challenges/challenge-page/2417/overview) and [OpenAD-3D](https://eval.ai/web/challenges/challenge-page/2418/overview)):
 
 ```python
 dd.submit(pred_list, save_path='result.pkl')
